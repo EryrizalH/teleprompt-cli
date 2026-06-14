@@ -12,7 +12,7 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
 
-    /// Override the timeout for command execution (in seconds)
+    /// Override the connection timeout (in seconds). Does not affect command execution duration.
     #[arg(long, global = true, default_value = "30")]
     pub timeout: u64,
 

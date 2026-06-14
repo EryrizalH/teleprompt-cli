@@ -19,7 +19,8 @@ pub fn execute_command(
     command: &str,
     timeout_secs: u64,
     verbose: bool,
-) -> Result<(i32, Vec<u8>, Vec<u8>), TelepromptError> {
+    on_stdout: &mut dyn FnMut(&[u8]),
+) -> Result<i32, TelepromptError> {
     if device.connection_type != ConnectionType::Telnet {
         return Err(TelepromptError::Other("Device is not configured for Telnet".to_string()));
     }
@@ -83,14 +84,10 @@ pub fn execute_command(
     stream.flush().map_err(|e| TelepromptError::Io(e))?;
 
     // 5. Read output
-    let mut command_output = Vec::new();
+    let mut stdout_buf = Vec::new();
     let mut sudo_prompt_handled = false;
 
     loop {
-        if start_time.elapsed() > timeout {
-            return Err(TelepromptError::Timeout(timeout_secs));
-        }
-
         let mut temp_buf = [0u8; 1024];
         let bytes_read = match stream.read(&mut temp_buf) {
             Ok(0) => break, // Connection closed
@@ -104,9 +101,9 @@ pub fn execute_command(
 
         // Negotiate telnet options and extract raw text
         let raw_bytes = handle_telnet_options(&mut stream, &temp_buf[..bytes_read])?;
-        command_output.extend_from_slice(&raw_bytes);
+        stdout_buf.extend_from_slice(&raw_bytes);
 
-        let output_str = String::from_utf8_lossy(&command_output);
+        let output_str = String::from_utf8_lossy(&stdout_buf);
 
         // Sudo password prompt detection
         if is_sudo && !sudo_prompt_handled && device.sudo_password_required {
@@ -116,7 +113,7 @@ pub fn execute_command(
                 stream.flush().map_err(|e| TelepromptError::Io(e))?;
                 sudo_prompt_handled = true;
                 // Clear the output buffer to remove the prompt and password echo
-                command_output.clear();
+                stdout_buf.clear();
                 continue;
             }
         }
@@ -124,31 +121,57 @@ pub fn execute_command(
         // Wait for prompt to return (indicating command completed)
         if ends_with_any_prompt(&output_str, prompt_suffixes) {
             // Remove the trailing shell prompt from output
-            let len = command_output.len();
             let mut prompt_len = 0;
             for suffix in prompt_suffixes {
                 if output_str.trim_end().ends_with(suffix) {
-                    prompt_len = suffix.len();
+                    let trimmed = output_str.trim_end();
+                    prompt_len = suffix.len() + (output_str.len() - trimmed.len());
                     break;
                 }
             }
-            if len >= prompt_len {
-                command_output.truncate(len - prompt_len);
+            if stdout_buf.len() >= prompt_len {
+                stdout_buf.truncate(stdout_buf.len() - prompt_len);
+            }
+            let cleaned = clean_newlines(stdout_buf);
+            if !cleaned.is_empty() {
+                on_stdout(&cleaned);
             }
             break;
         }
+
+        // Stream everything up to the last \n or \r
+        if let Some(last_pos) = stdout_buf.iter().rposition(|&x| x == b'\n' || x == b'\r') {
+            let streamable = stdout_buf.drain(0..=last_pos).collect::<Vec<u8>>();
+            let cleaned = clean_newlines(streamable);
+            if !cleaned.is_empty() {
+                on_stdout(&cleaned);
+            }
+        }
+
+        // If the buffer is getting large, stream the head of it (keeping the last 32 bytes just in case)
+        if stdout_buf.len() > 256 {
+            let stream_len = stdout_buf.len() - 32;
+            let streamable = stdout_buf.drain(0..stream_len).collect::<Vec<u8>>();
+            let cleaned = clean_newlines(streamable);
+            if !cleaned.is_empty() {
+                on_stdout(&cleaned);
+            }
+        }
     }
 
-    // Clean up carriage returns (\r\n -> \n)
-    let cleaned_output = clean_newlines(command_output);
-
     // Telnet doesn't return exit codes natively, so we default to 0 on success
-    Ok((0, cleaned_output, Vec::new()))
+    Ok(0)
 }
 
 pub fn test_connection(device: &Device, timeout_secs: u64, verbose: bool) -> Result<(), TelepromptError> {
     // A connection test for telnet logs in and waits for the prompt
-    let (code, _, _) = execute_command(device, "echo 'teleprompt_ok'", timeout_secs, verbose)?;
+    let code = execute_command(
+        device,
+        "echo 'teleprompt_ok'",
+        timeout_secs,
+        verbose,
+        &mut |_| {},
+    )?;
     if code == 0 {
         Ok(())
     } else {

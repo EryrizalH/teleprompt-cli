@@ -2,7 +2,7 @@ use ssh2::{Session, KeyboardInteractivePrompt, Prompt, CheckResult, KnownHostFil
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::credentials::{Device, ConnectionType, HostKeyPolicy};
 use crate::commands::get_known_hosts_path;
@@ -12,7 +12,9 @@ pub fn execute_command(
     command: &str,
     timeout_secs: u64,
     verbose: bool,
-) -> Result<(i32, Vec<u8>, Vec<u8>), TelepromptError> {
+    on_stdout: &mut dyn FnMut(&[u8]),
+    on_stderr: &mut dyn FnMut(&[u8]),
+) -> Result<i32, TelepromptError> {
     if device.connection_type != ConnectionType::Ssh {
         return Err(TelepromptError::Other("Device is not configured for SSH".to_string()));
     }
@@ -69,14 +71,10 @@ pub fn execute_command(
 
     sess.set_blocking(false);
 
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
     let mut stdout_closed = false;
     let mut stderr_closed = false;
 
-    let start_time = Instant::now();
-    let timeout = Duration::from_secs(timeout_secs);
-
+    #[derive(PartialEq)]
     enum SudoState {
         CheckingPrompt,
         PasswordSent,
@@ -90,44 +88,56 @@ pub fn execute_command(
     };
 
     let mut initial_prompts = 0;
+    let mut stdout_buf = Vec::new();
 
     while !stdout_closed || !stderr_closed {
-        if start_time.elapsed() > timeout {
-            return Err(TelepromptError::Timeout(timeout_secs));
-        }
-
         // Read stdout
         if !stdout_closed {
             let mut buf = [0u8; 1024];
             match channel.read(&mut buf) {
                 Ok(0) => stdout_closed = true,
                 Ok(n) => {
-                    stdout.extend_from_slice(&buf[..n]);
-                    
-                    // Handle sudo prompt detection
-                    if let SudoState::CheckingPrompt = sudo_state {
-                        let stdout_str = String::from_utf8_lossy(&stdout);
-                        if contains_sudo_prompt(&stdout_str) {
-                            if let Some(ref pwd) = device.password {
-                                initial_prompts = count_sudo_prompts(&stdout_str);
-                                // Write password to stdin
-                                sess.set_blocking(true);
-                                if let Err(e) = channel.write_all(format!("{}\n", pwd).as_bytes()) {
-                                    return Err(TelepromptError::SudoFailed(e.to_string()));
+                    match sudo_state {
+                        SudoState::Disabled => {
+                            on_stdout(&buf[..n]);
+                        }
+                        SudoState::CheckingPrompt => {
+                            stdout_buf.extend_from_slice(&buf[..n]);
+                            let stdout_str = String::from_utf8_lossy(&stdout_buf);
+                            if contains_sudo_prompt(&stdout_str) {
+                                if let Some(ref pwd) = device.password {
+                                    initial_prompts = count_sudo_prompts(&stdout_str);
+                                    // Write password to stdin
+                                    sess.set_blocking(true);
+                                    if let Err(e) = channel.write_all(format!("{}\n", pwd).as_bytes()) {
+                                        return Err(TelepromptError::SudoFailed(e.to_string()));
+                                    }
+                                    let _ = channel.flush();
+                                    sess.set_blocking(false);
+                                    sudo_state = SudoState::PasswordSent;
+                                } else {
+                                    return Err(TelepromptError::SudoFailed("Sudo requires a password, but none is saved".to_string()));
                                 }
-                                let _ = channel.flush();
-                                sess.set_blocking(false);
-                                sudo_state = SudoState::PasswordSent;
-                            } else {
-                                return Err(TelepromptError::SudoFailed("Sudo requires a password, but none is saved".to_string()));
+                            } else if (stdout_str.contains('\n') && !contains_sudo_prompt(&stdout_str)) || stdout_buf.len() > 512 {
+                                // Sudo didn't prompt, probably not asking for password
+                                on_stdout(&stdout_buf);
+                                stdout_buf.clear();
+                                sudo_state = SudoState::Disabled;
                             }
                         }
-                    } else if let SudoState::PasswordSent = sudo_state {
-                        // Check if password prompt appears again (implies incorrect password)
-                        let stdout_str = String::from_utf8_lossy(&stdout);
-                        // Find the prompt after the first password sent
-                        if count_sudo_prompts(&stdout_str) > initial_prompts {
-                            return Err(TelepromptError::SudoFailed("Incorrect password".to_string()));
+                        SudoState::PasswordSent => {
+                            stdout_buf.extend_from_slice(&buf[..n]);
+                            let stdout_str = String::from_utf8_lossy(&stdout_buf);
+                            if count_sudo_prompts(&stdout_str) > initial_prompts {
+                                return Err(TelepromptError::SudoFailed("Incorrect password".to_string()));
+                            }
+                            let pwd = device.password.as_deref().unwrap_or("");
+                            let cleaned = clean_sudo_output(stdout_buf.clone(), pwd);
+                            if !cleaned.is_empty() {
+                                on_stdout(&cleaned);
+                                stdout_buf.clear();
+                                sudo_state = SudoState::Disabled;
+                            }
                         }
                     }
                 }
@@ -141,13 +151,22 @@ pub fn execute_command(
             let mut buf = [0u8; 1024];
             match channel.stderr().read(&mut buf) {
                 Ok(0) => stderr_closed = true,
-                Ok(n) => stderr.extend_from_slice(&buf[..n]),
+                Ok(n) => on_stderr(&buf[..n]),
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
                 Err(e) => return Err(TelepromptError::Io(e)),
             }
         }
 
         std::thread::sleep(Duration::from_millis(10));
+    }
+
+    // Flush any remaining buffered stdout from sudo prompting phase
+    if sudo_state != SudoState::Disabled && !stdout_buf.is_empty() {
+        let pwd = device.password.as_deref().unwrap_or("");
+        let cleaned = clean_sudo_output(stdout_buf, pwd);
+        if !cleaned.is_empty() {
+            on_stdout(&cleaned);
+        }
     }
 
     sess.set_blocking(true);
@@ -158,17 +177,19 @@ pub fn execute_command(
     let exit_status = channel.exit_status()
         .map_err(|e| TelepromptError::Other(format!("Failed to retrieve exit status: {}", e)))?;
 
-    // If PTY was used, remove the password prompt and the echo of the password from stdout to keep it clean
-    if is_sudo {
-        stdout = clean_sudo_output(stdout, device.password.as_deref().unwrap_or(""));
-    }
-
-    Ok((exit_status, stdout, stderr))
+    Ok(exit_status)
 }
 
 pub fn test_connection(device: &Device, timeout_secs: u64, verbose: bool) -> Result<(), TelepromptError> {
     // We execute a simple echo command to test connectivity
-    let (status, _, _) = execute_command(device, "echo 'teleprompt_ok'", timeout_secs, verbose)?;
+    let status = execute_command(
+        device,
+        "echo 'teleprompt_ok'",
+        timeout_secs,
+        verbose,
+        &mut |_| {},
+        &mut |_| {},
+    )?;
     if status == 0 {
         Ok(())
     } else {
@@ -179,7 +200,14 @@ pub fn test_connection(device: &Device, timeout_secs: u64, verbose: bool) -> Res
 pub fn detect_sudo_capability(device: &mut Device, timeout_secs: u64) -> Result<(), TelepromptError> {
     // 1. Check if sudo is installed and if we can run without password
     // We run `sudo -n true`
-    let (status_no_pwd, _, _) = execute_command(device, "sudo -n true", timeout_secs, false)?;
+    let status_no_pwd = execute_command(
+        device,
+        "sudo -n true",
+        timeout_secs,
+        false,
+        &mut |_| {},
+        &mut |_| {},
+    )?;
     if status_no_pwd == 0 {
         device.sudo_capable = true;
         device.sudo_password_required = false;
@@ -189,7 +217,14 @@ pub fn detect_sudo_capability(device: &mut Device, timeout_secs: u64) -> Result<
     // 2. Check if we can run with password
     device.sudo_capable = true;
     device.sudo_password_required = true;
-    let (status_pwd, _, _) = execute_command(device, "sudo -S true", timeout_secs, false)?;
+    let status_pwd = execute_command(
+        device,
+        "sudo -S true",
+        timeout_secs,
+        false,
+        &mut |_| {},
+        &mut |_| {},
+    )?;
     if status_pwd == 0 {
         // Sudo works with password!
         Ok(())

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1] — 2026-06-14
+
+### Changed
+- **Real-time output streaming**: Output from command execution (SSH and Telnet) is now streamed to stdout and stderr in real-time instead of being buffered and printed at the end.
+- **Removed execution timeout**: Command execution is no longer subject to the 30-second timeout. The `--timeout` flag is now strictly for connection establishment (TCP, SSH handshake, and login phases).
+- **Sudo password prompt handling**: Kept prompt filtering internally, streaming only the actual command output after sudo authorization succeeds.
+
 ## [0.2.0] — 2026-06-13
 
 ### Added

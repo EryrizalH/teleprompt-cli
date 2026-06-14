@@ -1,6 +1,6 @@
 {
   "name": "teleprompt-cli",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Secure remote device management CLI for SSH & Telnet, optimized for AI agents and developer workflows",
   "bin": {
     "teleprompt": "bin/index.js"

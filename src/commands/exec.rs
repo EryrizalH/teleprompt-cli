@@ -36,20 +36,34 @@ pub fn run(
     let command = command_args.join(" ");
 
     // Execute based on connection type
-    let (exit_code, stdout, stderr) = match device.connection_type {
-        ConnectionType::Ssh => ssh::execute_command(device, &command, timeout_secs, verbose)?,
-        ConnectionType::Telnet => telnet::execute_command(device, &command, timeout_secs, verbose)?,
+    let mut out = std::io::stdout();
+    let mut err = std::io::stderr();
+    let exit_code = match device.connection_type {
+        ConnectionType::Ssh => ssh::execute_command(
+            device,
+            &command,
+            timeout_secs,
+            verbose,
+            &mut |data| {
+                let _ = out.write_all(data);
+                let _ = out.flush();
+            },
+            &mut |data| {
+                let _ = err.write_all(data);
+                let _ = err.flush();
+            },
+        )?,
+        ConnectionType::Telnet => telnet::execute_command(
+            device,
+            &command,
+            timeout_secs,
+            verbose,
+            &mut |data| {
+                let _ = out.write_all(data);
+                let _ = out.flush();
+            },
+        )?,
     };
-
-    // Print stdout and stderr to match remote output exactly
-    if !stdout.is_empty() {
-        std::io::stdout().write_all(&stdout).map_err(TelepromptError::Io)?;
-        std::io::stdout().flush().map_err(TelepromptError::Io)?;
-    }
-    if !stderr.is_empty() {
-        std::io::stderr().write_all(&stderr).map_err(TelepromptError::Io)?;
-        std::io::stderr().flush().map_err(TelepromptError::Io)?;
-    }
 
     Ok(exit_code)
 }
