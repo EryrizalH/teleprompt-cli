@@ -102,6 +102,10 @@ impl OsType {
     }
 }
 
+pub fn should_detect_sudo(connection_type: &ConnectionType, os_type: OsType) -> bool {
+    *connection_type == ConnectionType::Ssh && os_type == OsType::Linux
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Zeroize, ZeroizeOnDrop)]
 pub struct Device {
     pub name: String,
@@ -339,5 +343,21 @@ mod tests {
         assert_eq!(loaded_telnet.host_key_policy, HostKeyPolicy::AcceptNew);
 
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn test_should_detect_sudo_only_for_ssh_linux() {
+        assert!(should_detect_sudo(&ConnectionType::Ssh, OsType::Linux));
+        assert!(!should_detect_sudo(&ConnectionType::Telnet, OsType::Linux));
+
+        for os_type in [
+            OsType::Windows,
+            OsType::RouterOs,
+            OsType::CiscoIos,
+            OsType::JunOs,
+            OsType::Generic,
+        ] {
+            assert!(!should_detect_sudo(&ConnectionType::Ssh, os_type));
+        }
     }
 }

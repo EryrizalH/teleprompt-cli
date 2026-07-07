@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.2] — 2026-07-07
+
+### Fixed
+- **Skip sudo detection for non-Linux devices**: Adding or editing SSH devices now checks sudo capability only when the selected OS is Linux. Non-Linux devices still run the normal connection test, but Teleprompt no longer executes sudo probes that can hang on unsupported platforms.
+
 ## [0.2.1] — 2026-06-14
 
 ### Changed

@@ -2,7 +2,7 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::commands::get_master_password;
-use crate::credentials::{self, ConnectionType, Device, OsType, HostKeyPolicy};
+use crate::credentials::{self, should_detect_sudo, ConnectionType, Device, OsType, HostKeyPolicy};
 use crate::error::TelepromptError;
 use crate::{ssh, telnet};
 
@@ -145,7 +145,7 @@ pub fn run(db_path: Option<&Path>, timeout_secs: u64, verbose: bool) -> Result<(
     match test_res {
         Ok(_) => {
             println!("✔ Connection successful!");
-            if connection_type == ConnectionType::Ssh {
+            if should_detect_sudo(&connection_type, os_type) {
                 println!("Checking sudo capability...");
                 let mut mock_device = device.clone();
                 if let Ok(_) = ssh::detect_sudo_capability(&mut mock_device, timeout_secs) {
