@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.0]
+
+### Added
+- **SSH auto-discovery and import**: New `teleprompt import` workflow reads literal hosts from `~/.ssh/config`, correlates matching unhashed `known_hosts` records, tests connectivity, and stores confirmed devices securely.
+- **Safe automation flags**: `teleprompt import --all --yes` runs without prompts, requires matching unhashed `known_hosts` trust with strict verification, and skips incomplete or failed candidates.
+- **Cross-platform Ed25519 generation**: New `teleprompt generate-key` creates `~/.ssh/teleprompt_ed25519` and `.pub` without external tools or overwriting existing files.
+- **Initialization onboarding**: `teleprompt init` now offers opt-in key generation and SSH device import after creating the encrypted store.
+
+### Changed
+- Device connection testing and Linux sudo capability detection now share the same workflow between manual add and SSH import.
+
 ## [0.2.2] — 2026-07-07
 
 ### Fixed

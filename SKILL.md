@@ -40,13 +40,32 @@ teleprompt list
 ```
 *Output is printed as an ASCII table showing device name, host, port, user, protocol type, OS type, and sudo access.*
 
-### 2. Check Device Connectivity
+### 2. Discover or Generate SSH Credentials
+These onboarding commands can also be launched from the optional prompts at the end of `teleprompt init`:
+
+```bash
+# Generate an unencrypted Ed25519 key pair without overwriting existing files
+teleprompt generate-key
+
+# Review and import each literal Host entry from ~/.ssh/config
+teleprompt import
+
+# Select all candidates, but retain prompts for missing credentials or failed tests
+teleprompt import --all
+
+# Fully non-interactive; incomplete, untrusted, or failed candidates are skipped
+teleprompt import --all --yes
+```
+
+The generated public key at `~/.ssh/teleprompt_ed25519.pub` must be installed on each remote server before it can authenticate. Import supports literal `Host`, `HostName`, `User`, `Port`, and `IdentityFile` values. Wildcards, `Include`, `Match`, `ProxyJump`, hashed hostnames, and standalone `known_hosts` entries are skipped; advanced OpenSSH tokens are not expanded. Unattended `--all --yes` imports additionally require a matching unhashed `known_hosts` record and use strict host-key verification.
+
+### 3. Check Device Connectivity
 To check if a specific device is online and credentials are correct:
 ```bash
 teleprompt test <device_name>
 ```
 
-### 3. Run Remote Commands
+### 4. Run Remote Commands
 To execute a command on a remote device:
 ```bash
 teleprompt <device_name> <command...>
@@ -66,7 +85,7 @@ teleprompt <device_name> <command...>
   teleprompt database-srv df -h
   ```
 
-### 4. Execute Sudo Commands
+### 5. Execute Sudo Commands
 If a device has sudo privileges configured, you can run sudo commands directly:
 ```bash
 teleprompt server1 sudo systemctl restart nginx

@@ -1,12 +1,15 @@
 use std::io::Write;
 use std::path::Path;
 
-use crate::commands::get_master_password;
-use crate::credentials::{self, should_detect_sudo, ConnectionType, Device, OsType, HostKeyPolicy};
+use crate::commands::{get_master_password, test_and_prepare_device};
+use crate::credentials::{self, ConnectionType, Device, HostKeyPolicy, OsType};
 use crate::error::TelepromptError;
-use crate::{ssh, telnet};
 
-pub fn run(db_path: Option<&Path>, timeout_secs: u64, verbose: bool) -> Result<(), TelepromptError> {
+pub fn run(
+    db_path: Option<&Path>,
+    timeout_secs: u64,
+    verbose: bool,
+) -> Result<(), TelepromptError> {
     let resolved_path = match db_path {
         Some(p) => p.to_path_buf(),
         None => credentials::get_default_db_path()?,
@@ -80,7 +83,8 @@ pub fn run(db_path: Option<&Path>, timeout_secs: u64, verbose: bool) -> Result<(
 
     match connection_type {
         ConnectionType::Ssh => {
-            let auth_method = prompt_input("Auth Method (password/key) [password]", Some("password"))?;
+            let auth_method =
+                prompt_input("Auth Method (password/key) [password]", Some("password"))?;
             if auth_method.trim().to_lowercase() == "key" {
                 let kp = prompt_input("SSH Private Key Path", None)?;
                 key_path = Some(kp);
@@ -137,25 +141,17 @@ pub fn run(db_path: Option<&Path>, timeout_secs: u64, verbose: bool) -> Result<(
 
     // 7. Test connection and detect sudo
     println!("\nTesting connection to {}...", device.name);
-    let test_res = match connection_type {
-        ConnectionType::Ssh => ssh::test_connection(&device, timeout_secs, verbose),
-        ConnectionType::Telnet => telnet::test_connection(&device, timeout_secs, verbose),
-    };
-
-    match test_res {
-        Ok(_) => {
+    match test_and_prepare_device(&mut device, timeout_secs, verbose) {
+        Ok(()) => {
             println!("✔ Connection successful!");
-            if should_detect_sudo(&connection_type, os_type) {
-                println!("Checking sudo capability...");
-                let mut mock_device = device.clone();
-                if let Ok(_) = ssh::detect_sudo_capability(&mut mock_device, timeout_secs) {
-                    device.sudo_capable = mock_device.sudo_capable;
-                    device.sudo_password_required = mock_device.sudo_password_required;
-                    if device.sudo_capable {
-                        println!("✔ Sudo capable (Password required: {})", device.sudo_password_required);
-                    } else {
-                        println!("ℹ Sudo not available or access denied.");
-                    }
+            if device.os_type == OsType::Linux && connection_type == ConnectionType::Ssh {
+                if device.sudo_capable {
+                    println!(
+                        "✔ Sudo capable (Password required: {})",
+                        device.sudo_password_required
+                    );
+                } else {
+                    println!("ℹ Sudo not available or access denied.");
                 }
             }
         }
@@ -164,7 +160,9 @@ pub fn run(db_path: Option<&Path>, timeout_secs: u64, verbose: bool) -> Result<(
             print!("Do you still want to save this device? (y/N): ");
             std::io::stdout().flush().map_err(TelepromptError::Io)?;
             let mut answer = String::new();
-            std::io::stdin().read_line(&mut answer).map_err(TelepromptError::Io)?;
+            std::io::stdin()
+                .read_line(&mut answer)
+                .map_err(TelepromptError::Io)?;
             if !answer.trim().eq_ignore_ascii_case("y") {
                 println!("Device not saved.");
                 return Ok(());
@@ -184,7 +182,9 @@ fn prompt_input(label: &str, default: Option<&str>) -> Result<String, Teleprompt
     print!("{}: ", label);
     std::io::stdout().flush().map_err(TelepromptError::Io)?;
     let mut input = String::new();
-    std::io::stdin().read_line(&mut input).map_err(TelepromptError::Io)?;
+    std::io::stdin()
+        .read_line(&mut input)
+        .map_err(TelepromptError::Io)?;
     let input = input.trim();
     if input.is_empty() {
         if let Some(def) = default {
@@ -194,7 +194,9 @@ fn prompt_input(label: &str, default: Option<&str>) -> Result<String, Teleprompt
     Ok(input.to_string())
 }
 
-fn prompt_host_key_policy(current: Option<&HostKeyPolicy>) -> Result<HostKeyPolicy, TelepromptError> {
+fn prompt_host_key_policy(
+    current: Option<&HostKeyPolicy>,
+) -> Result<HostKeyPolicy, TelepromptError> {
     println!("\nHost Key Verification Policy:");
     println!("1) AcceptNew — accept new hosts, verify existing (recommended)");
     println!("2) Strict — reject unknown hosts");
@@ -210,7 +212,9 @@ fn prompt_host_key_policy(current: Option<&HostKeyPolicy>) -> Result<HostKeyPoli
         print!("Enter choice (1-3) [{}]: ", default_val);
         std::io::stdout().flush().map_err(TelepromptError::Io)?;
         let mut input = String::new();
-        std::io::stdin().read_line(&mut input).map_err(TelepromptError::Io)?;
+        std::io::stdin()
+            .read_line(&mut input)
+            .map_err(TelepromptError::Io)?;
         let input = input.trim();
         let selected = if input.is_empty() { default_val } else { input };
 

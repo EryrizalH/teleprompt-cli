@@ -33,6 +33,21 @@ pub enum Commands {
     /// Add a new remote device (SSH/Telnet)
     Add,
 
+    /// Import SSH devices discovered from ~/.ssh/config and known_hosts
+    Import {
+        /// Select all discovered candidates
+        #[arg(long)]
+        all: bool,
+
+        /// Run without prompts; requires --all and skips incomplete/untrusted/failed candidates
+        #[arg(long, requires = "all")]
+        yes: bool,
+    },
+
+    /// Generate an Ed25519 key pair for Teleprompt
+    #[command(name = "generate-key")]
+    GenerateKey,
+
     /// Remove a registered remote device
     Remove {
         /// Name of the device to remove
@@ -62,4 +77,32 @@ pub enum Commands {
     // E.g. `teleprompt deviceA ls -la`
     #[command(external_subcommand)]
     External(Vec<OsString>),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_import_automation_flags() {
+        let cli = Cli::try_parse_from(["teleprompt", "import", "--all", "--yes"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Import {
+                all: true,
+                yes: true
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_yes_without_all() {
+        assert!(Cli::try_parse_from(["teleprompt", "import", "--yes"]).is_err());
+    }
+
+    #[test]
+    fn parses_generate_key_command() {
+        let cli = Cli::try_parse_from(["teleprompt", "generate-key"]).unwrap();
+        assert!(matches!(cli.command, Some(Commands::GenerateKey)));
+    }
 }

@@ -1,7 +1,9 @@
 pub mod cli;
-pub mod crypto;
-pub mod credentials;
-pub mod ssh;
-pub mod telnet;
-pub mod error;
 pub mod commands;
+pub mod credentials;
+pub mod crypto;
+pub mod error;
+pub mod ssh;
+pub mod ssh_config;
+pub mod ssh_key;
+pub mod telnet;

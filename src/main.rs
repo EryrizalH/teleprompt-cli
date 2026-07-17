@@ -27,11 +27,19 @@ fn run_app(args: Cli) -> Result<i32, TelepromptError> {
 
     match args.command {
         Some(Commands::Init) => {
-            commands::init::run(db_path)?;
+            commands::init::run(db_path, timeout, verbose)?;
             Ok(0)
         }
         Some(Commands::Add) => {
             commands::add::run(db_path, timeout, verbose)?;
+            Ok(0)
+        }
+        Some(Commands::Import { all, yes }) => {
+            commands::import_ssh::run(db_path, all, yes, timeout, verbose)?;
+            Ok(0)
+        }
+        Some(Commands::GenerateKey) => {
+            commands::generate_key::run()?;
             Ok(0)
         }
         Some(Commands::Remove { name }) => {
@@ -83,7 +91,8 @@ fn run_app(args: Cli) -> Result<i32, TelepromptError> {
             // No subcommand or external arguments passed
             use clap::CommandFactory;
             let mut cmd = Cli::command();
-            cmd.print_help().map_err(|e| TelepromptError::Other(e.to_string()))?;
+            cmd.print_help()
+                .map_err(|e| TelepromptError::Other(e.to_string()))?;
             println!(); // Print newline
             Ok(0)
         }

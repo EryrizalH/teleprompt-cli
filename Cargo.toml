@@ -1,6 +1,6 @@
 [package]
 name = "teleprompt-cli"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2021"
 description = "Secure remote device management CLI for AI agents"
 license = "MIT"
@@ -24,6 +24,7 @@ comfy-table = "7.1"
 anyhow = "1.0"
 thiserror = "1.0"
 zeroize = { version = "1.7", features = ["derive"] }
+ssh-key = { version = "=0.6.7", default-features = false, features = ["std", "ed25519", "rand_core"] }
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 ssh2 = { version = "0.9", features = ["vendored-openssl"] }

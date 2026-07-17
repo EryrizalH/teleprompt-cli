@@ -24,6 +24,8 @@ Teleprompt CLI allows developers and AI agents to connect to and execute command
 
 ## Key Features
 
+* **SSH Auto-Discovery & Import**: Detect hosts from `~/.ssh/config`, correlate them with `~/.ssh/known_hosts`, test connectivity, and import confirmed devices into the encrypted store.
+* **Cross-Platform Ed25519 Key Generation**: Create `~/.ssh/teleprompt_ed25519` and its public key without relying on an external `ssh-keygen` executable or overwriting existing keys.
 * **Zero-Exposure Credentials**: All device credentials (passwords, private keys, passphrases) are encrypted locally using AES-256-GCM (Argon2id key derivation) in a local database (`~/.teleprompt/credentials.enc`).
 * **Bypass Interactive Prompts**: Load the `TELEPROMPT_KEY` environment variable in your automation or AI agent context to retrieve credentials and execute commands without interactive password prompts.
 * **Encrypted SSH Key Support**: Use password-protected SSH private keys — Teleprompt now prompts for and securely stores the key passphrase alongside the key path.
@@ -100,12 +102,18 @@ teleprompt <device-name> "cd /var/log && cat syslog | tail -n 20"
 | :--- | :--- |
 | `teleprompt init` | Initialize the secure encrypted credential database. |
 | `teleprompt add` | Interactively register a new remote device (SSH/Telnet). |
+| `teleprompt import` | Detect SSH config hosts and confirm each import interactively. |
+| `teleprompt import --all` | Select all discovered hosts while retaining required prompts. |
+| `teleprompt import --all --yes` | Import non-interactively; skip incomplete, untrusted, or failed devices. |
+| `teleprompt generate-key` | Safely generate the default Teleprompt Ed25519 key pair. |
 | `teleprompt list` | View all registered devices. |
 | `teleprompt remove <name>` | Delete a device configuration. |
 | `teleprompt edit <name>` | Interactively modify a device configuration. |
 | `teleprompt test <name>` | Test connectivity and credential validation. |
 | `teleprompt install-skill` | Copy the AI Agent instructions (`TELEPROMPT_SKILL.md`) to the current directory. |
 | `teleprompt <name> <command...>` | Run a command on the remote device. |
+
+`--all --yes` requires every candidate to match an unhashed OpenSSH `known_hosts` entry and uses strict host-key verification. The SSH config parser accepts literal values for the supported fields; wildcard blocks and advanced OpenSSH token expansion are intentionally outside this initial scope.
 
 ### Global Options
 * `--timeout <seconds>`: Override execution timeout (default is `30` seconds).

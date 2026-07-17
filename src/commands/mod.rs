@@ -1,24 +1,32 @@
-pub mod init;
 pub mod add;
-pub mod remove;
 pub mod edit;
-pub mod list;
-pub mod test;
 pub mod exec;
+pub mod generate_key;
+pub mod import_ssh;
+pub mod init;
 pub mod install_skill;
+pub mod list;
+pub mod remove;
+pub mod test;
 
 use std::io::Write;
 
+use crate::credentials::{should_detect_sudo, ConnectionType, Device};
+use crate::error::TelepromptError;
+use crate::{ssh, telnet};
+
 pub fn get_master_key_path() -> Result<std::path::PathBuf, crate::error::TelepromptError> {
-    let home_dir = dirs::home_dir()
-        .ok_or_else(|| crate::error::TelepromptError::Other("Could not find home directory".to_string()))?;
+    let home_dir = dirs::home_dir().ok_or_else(|| {
+        crate::error::TelepromptError::Other("Could not find home directory".to_string())
+    })?;
     Ok(home_dir.join(".teleprompt").join("master.key"))
 }
 
 /// Returns the path to the known_hosts file
 pub fn get_known_hosts_path() -> Result<std::path::PathBuf, crate::error::TelepromptError> {
-    let home_dir = dirs::home_dir()
-        .ok_or_else(|| crate::error::TelepromptError::Other("Could not find home directory".to_string()))?;
+    let home_dir = dirs::home_dir().ok_or_else(|| {
+        crate::error::TelepromptError::Other("Could not find home directory".to_string())
+    })?;
     Ok(home_dir.join(".teleprompt").join("known_hosts"))
 }
 
@@ -44,15 +52,16 @@ pub fn get_master_password() -> Result<String, crate::error::TelepromptError> {
 
     // Prompt user
     print!("Enter Master Password: ");
-    std::io::stdout().flush().map_err(|e| crate::error::TelepromptError::Io(e))?;
-    
-    let pwd = rpassword::read_password()
-        .map_err(|e| crate::error::TelepromptError::Io(e))?;
-    
+    std::io::stdout()
+        .flush()
+        .map_err(crate::error::TelepromptError::Io)?;
+
+    let pwd = rpassword::read_password().map_err(crate::error::TelepromptError::Io)?;
+
     if pwd.is_empty() {
         return Err(crate::error::TelepromptError::InvalidPassword);
     }
-    
+
     Ok(pwd)
 }
 
@@ -81,6 +90,29 @@ pub fn save_master_password(password: &str) -> Result<(), crate::error::Teleprom
 
     // Set secure permissions
     let _ = set_owner_only_permissions(&key_path);
+
+    Ok(())
+}
+
+/// Tests connectivity and enriches Linux SSH devices with sudo capability details.
+pub fn test_and_prepare_device(
+    device: &mut Device,
+    timeout_secs: u64,
+    verbose: bool,
+) -> Result<(), TelepromptError> {
+    match device.connection_type {
+        ConnectionType::Ssh => ssh::test_connection(device, timeout_secs, verbose)?,
+        ConnectionType::Telnet => telnet::test_connection(device, timeout_secs, verbose)?,
+    }
+
+    if should_detect_sudo(&device.connection_type, device.os_type) {
+        // Commit probe results only after the complete sudo check succeeds.
+        let mut checked_device = device.clone();
+        if ssh::detect_sudo_capability(&mut checked_device, timeout_secs).is_ok() {
+            device.sudo_capable = checked_device.sudo_capable;
+            device.sudo_password_required = checked_device.sudo_password_required;
+        }
+    }
 
     Ok(())
 }
